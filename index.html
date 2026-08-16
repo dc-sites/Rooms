@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PeerJS WebRTC Video Room</title>
+  <!-- PeerJS Client Library -->
+  <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: sans-serif; }
+    body { background: #0f172a; color: #fff; display: flex; flex-direction: column; height: 100vh; }
+    
+    header { padding: 1rem; background: #1e293b; text-align: center; border-bottom: 1px solid #334155; }
+    
+    #setup-panel { padding: 2rem; display: flex; gap: 10px; justify-content: center; align-items: center; }
+    input, button { padding: 10px 14px; border-radius: 6px; border: 1px solid #334155; font-size: 1rem; }
+    input { background: #1e293b; color: #fff; }
+    button { background: #2563eb; color: #fff; cursor: pointer; font-weight: bold; border: none; }
+    button:hover { background: #1d4ed8; }
+
+    #video-grid {
+      flex: 1;
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 15px;
+      padding: 20px;
+      overflow-y: auto;
+    }
+
+    .video-card {
+      position: relative;
+      background: #1e293b;
+      border-radius: 8px;
+      overflow: hidden;
+      aspect-ratio: 16 / 9;
+      border: 1px solid #334155;
+    }
+
+    video {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      background: #000;
+    }
+
+    .peer-label {
+      position: absolute;
+      bottom: 8px;
+      left: 8px;
+      background: rgba(0, 0, 0, 0.6);
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-size: 0.85rem;
+    }
+
+    #controls {
+      display: none;
+      justify-content: center;
+      gap: 15px;
+      padding: 1rem;
+      background: #1e293b;
+      border-top: 1px solid #334155;
+    }
+    
+    .btn-toggle { background: #475569; }
+    .btn-toggle.active { background: #dc2626; }
+  </style>
+</head>
+<body>
+
+  <header>
+    <h2>Custom WebRTC Room</h2>
+  </header>
+
+  <div id="setup-panel">
+    <input type="text" id="peer-id-input" placeholder="Enter unique user ID...">
+    <button id="join-btn">Initialize Connection</button>
+  </div>
+
+  <div id="video-grid"></div>
+
+  <div id="controls">
+    <button id="toggle-mic" class="btn-toggle">Mute Mic</button>
+    <button id="toggle-cam" class="btn-toggle">Turn Off Cam</button>
+    <input type="text" id="target-id" placeholder="Connect to Remote ID...">
+    <button id="call-btn">Call Peer</button>
+  </div>
+
+  <script>
+    let localStream = null;
+    let peer = null;
+    const connectedPeers = {};
+
+    const videoGrid = document.getElementById('video-grid');
+    const setupPanel = document.getElementById('setup-panel');
+    const controls = document.getElementById('controls');
+    const peerIdInput = document.getElementById('peer-id-input');
+    const joinBtn = document.getElementById('join-btn');
+    const callBtn = document.getElementById('call-btn');
+    const targetIdInput = document.getElementById('target-id');
+    const toggleMicBtn = document.getElementById('toggle-mic');
+    const toggleCamBtn = document.getElementById('toggle-cam');
+
+    // WebRTC Peer Configuration with STUN and TURN Relays
+    const peerConfig = {
+      config: {
+        iceServers: [
+          { urls: 'stun:stun.l.google.com:19302' },
+          { urls: 'stun:openrelay.metered.ca:80' },
+          {
+            urls: 'turn:openrelay.metered.ca:80',
+            username: 'openrelayproject',
+            credential: 'openrelayproject'
+          },
+          {
+            urls: 'turn:openrelay.metered.ca:443',
+            username: 'openrelayproject',
+            credential: 'openrelayproject'
+          }
+        ]
+      }
+    };
+
+    // 1. Initialize Local Media Stream
+    async function initLocalStream() {
+      try {
+        localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+        addVideoElement('Local Stream (You)', localStream, true);
+      } catch (err) {
+        console.error('Failed to access media devices:', err);
+        alert('Could not access camera/microphone. Please check browser permissions.');
+      }
+    }
+
+    // 2. Setup PeerJS Connection
+    joinBtn.addEventListener('click', async () => {
+      const customId = peerIdInput.value.trim();
+      if (!customId) return alert('Enter a valid User ID.');
+
+      await initLocalStream();
+      if (!localStream) return;
+
+      peer = new Peer(customId, peerConfig);
+
+      peer.on('open', (id) => {
+        setupPanel.style.display = 'none';
+        controls.style.display = 'flex';
+        alert(`Connected to Peer Network with ID: ${id}`);
+      });
+
+      // Handle Incoming Calls
+      peer.on('call', (call) => {
+        call.answer(localStream);
+        handleCallStream(call);
+      });
+
+      peer.on('error', (err) => console.error('PeerJS Error:', err));
+    });
+
+    // 3. Initiate Call to Remote Peer
+    callBtn.addEventListener('click', () => {
+      const remoteId = targetIdInput.value.trim();
+      if (!remoteId) return alert('Enter target peer ID.');
+      if (connectedPeers[remoteId]) return alert('Already connected to this peer.');
+
+      const call = peer.call(remoteId, localStream);
+      handleCallStream(call);
+    });
+
+    // Handle Media Tracks from a Call
+    function handleCallStream(call) {
+      call.on('stream', (remoteStream) => {
+        if (!connectedPeers[call.peer]) {
+          connectedPeers[call.peer] = call;
+          addVideoElement(`Peer: ${call.peer}`, remoteStream, false);
+        }
+      });
+
+      call.on('close', () => removeVideoElement(call.peer));
+      call.on('error', () => removeVideoElement(call.peer));
+    }
+
+    // Add Video Element to Grid UI
+    function addVideoElement(label, stream, isMuted) {
+      const card = document.createElement('div');
+      card.className = 'video-card';
+      card.id = `card-${label}`;
+
+      const video = document.createElement('video');
+      video.srcObject = stream;
+      video.autoplay = true;
+      video.playsInline = true;
+      if (isMuted) video.muted = true;
+
+      const tag = document.createElement('div');
+      tag.className = 'peer-label';
+      tag.innerText = label;
+
+      card.appendChild(video);
+      card.appendChild(tag);
+      videoGrid.appendChild(card);
+    }
+
+    // Remove Video Element from UI
+    function removeVideoElement(peerId) {
+      const card = document.getElementById(`card-Peer: ${peerId}`);
+      if (card) card.remove();
+      delete connectedPeers[peerId];
+    }
+
+    // Mute/Unmute Audio Tracks
+    toggleMicBtn.addEventListener('click', () => {
+      const audioTrack = localStream.getAudioTracks()[0];
+      if (audioTrack) {
+        audioTrack.enabled = !audioTrack.enabled;
+        toggleMicBtn.innerText = audioTrack.enabled ? 'Mute Mic' : 'Unmute Mic';
+        toggleMicBtn.classList.toggle('active', !audioTrack.enabled);
+      }
+    });
+
+    // Toggle Camera Tracks
+    toggleCamBtn.addEventListener('click', () => {
+      const videoTrack = localStream.getVideoTracks()[0];
+      if (videoTrack) {
+        videoTrack.enabled = !videoTrack.enabled;
+        toggleCamBtn.innerText = videoTrack.enabled ? 'Turn Off Cam' : 'Turn On Cam';
+        toggleCamBtn.classList.toggle('active', !videoTrack.enabled);
+      }
+    });
+  </script>
+</body>
+</html>
