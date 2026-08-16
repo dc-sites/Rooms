@@ -39,7 +39,7 @@
 <div class="container">
   <!-- Setup Screen -->
   <div id="setup-section" class="card">
-    <h2>🎯 Learny Virtual Study Room</h2>
+    <h2>Learny Virtual Study Room</h2>
     <input type="text" id="user-name" placeholder="Your Name (e.g., Kasun)" style="width: 100%; margin-bottom: 20px;" />
     
     <div class="grid">
@@ -84,7 +84,7 @@
       <span id="room-id-tag" style="color: #38bdf8; font-weight: bold; font-family: monospace; font-size: 1.1rem;"></span>
     </div>
 
-    <!-- Share Card -->
+    <!-- Share Link -->
     <div class="share-box flex" style="align-items: center; justify-content: space-between;">
       <div style="font-size: 0.85rem; color: #94a3b8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-right: 10px;">
         🔗 Share Link: <span id="share-link-text" style="color: #fff;"></span>
@@ -138,14 +138,15 @@
     get 
   } from "https://www.gstatic.com/firebasejs/12.17.1/firebase-database.js";
 
+  // Exact Firebase Config with Regional Singapore Database URL
   const firebaseConfig = {
     apiKey: "AIzaSyCgPaCkohoVx6rXHAbQhk80R3EvncVkxx4",
     authDomain: "rooms-7a301.firebaseapp.com",
+    databaseURL: "https://rooms-7a301-default-rtdb.asia-southeast1.firebasedatabase.app",
     projectId: "rooms-7a301",
     storageBucket: "rooms-7a301.firebasestorage.app",
     messagingSenderId: "588297268013",
-    appId: "1:588297268013:web:51de1add5257a368f781a4",
-    databaseURL: "https://rooms-7a301-default-rtdb.firebaseio.com"
+    appId: "1:588297268013:web:51de1add5257a368f781a4"
   };
 
   const app = initializeApp(firebaseConfig);
@@ -163,7 +164,7 @@
     return `${prefix}-${code}`;
   }
 
-  // Check URL parameters for direct join via shared link
+  // Pre-fill Room ID if accessing via shared link (?room=ROOM_ID)
   window.addEventListener("DOMContentLoaded", () => {
     const urlParams = new URLSearchParams(window.location.search);
     const roomIdFromUrl = urlParams.get("room");
@@ -172,16 +173,21 @@
     }
   });
 
-  // Create Room (User becomes Host)
+  // Create Room Event Handler
   document.getElementById("btn-create").addEventListener("click", () => {
     const roomName = document.getElementById("new-room-name").value || "Study Room";
     const maxStudents = parseInt(document.getElementById("max-students").value) || 4;
     const focusMins = parseInt(document.getElementById("focus-mins").value) || 25;
     const breakMins = parseInt(document.getElementById("break-mins").value) || 5;
 
+    // Generate Room ID instantly and set user as Host
     currentRoomId = generateRoomId(roomName);
     isHost = true;
 
+    // Switch screen view immediately
+    enterRoom(currentRoomId);
+
+    // Save room data to Firebase
     set(ref(db, "rooms/" + currentRoomId), {
       roomName,
       maxStudents,
@@ -190,10 +196,13 @@
       hostId: userId,
       status: "WAITING",
       endTime: 0
-    }).then(() => enterRoom(currentRoomId));
+    }).catch((err) => {
+      console.error("Firebase write error:", err);
+      alert("Error initializing room in database: " + err.message);
+    });
   });
 
-  // Join Room
+  // Join Room Event Handler
   document.getElementById("btn-join").addEventListener("click", () => {
     const roomId = document.getElementById("join-room-id").value.trim();
     if (!roomId) return;
@@ -207,14 +216,14 @@
       const currentUsersCount = data.users ? Object.keys(data.users).length : 0;
 
       if (currentUsersCount >= data.maxStudents) {
-        alert(`Room is full! (Max ${data.maxStudents} students)`);
+        alert(`Room is full! (Maximum limit: ${data.maxStudents} students)`);
         return;
       }
 
       currentRoomId = roomId;
       isHost = (data.hostId === userId);
       enterRoom(currentRoomId);
-    });
+    }).catch(err => alert("Connection error: " + err.message));
   });
 
   function enterRoom(roomId) {
@@ -227,12 +236,12 @@
     const fullShareUrl = `${window.location.origin}${window.location.pathname}?room=${roomId}`;
     document.getElementById("share-link-text").innerText = fullShareUrl;
 
-    // Presence Management
+    // Register User Presence in Realtime DB
     const userRef = ref(db, `rooms/${roomId}/users/${userId}`);
     set(userRef, { name: userName, isHost });
     onDisconnect(userRef).remove();
 
-    // Listen to Room Changes
+    // Listen for Room State Changes
     onValue(ref(db, `rooms/${roomId}`), (snapshot) => {
       const data = snapshot.val();
       if (!data) return;
@@ -240,7 +249,6 @@
       document.getElementById("display-room-title").innerText = data.roomName;
       document.getElementById("max-count").innerText = data.maxStudents;
 
-      // Show 'Start Session' button to Host if room is WAITING
       if (isHost && data.status === "WAITING") {
         document.getElementById("btn-start-session").classList.remove("hidden");
       } else {
@@ -250,7 +258,7 @@
       updatePhase(data.status, data.endTime, data.focusMins, data.breakMins);
     });
 
-    // Listen to Active Users
+    // Listen for Active Participants
     onValue(ref(db, `rooms/${roomId}/users`), (snapshot) => {
       const users = snapshot.val() || {};
       const userArray = Object.values(users);
@@ -262,7 +270,7 @@
         .join("");
     });
 
-    // Chat Listener
+    // Listen for Messages
     onChildAdded(ref(db, `rooms/${roomId}/messages`), (snapshot) => {
       const msg = snapshot.val();
       const box = document.getElementById("chat-box");
@@ -271,7 +279,7 @@
     });
   }
 
-  // Host Starts Session
+  // Host Session Start Trigger
   document.getElementById("btn-start-session").addEventListener("click", () => {
     get(ref(db, `rooms/${currentRoomId}`)).then((snapshot) => {
       const data = snapshot.val();
@@ -284,7 +292,7 @@
     });
   });
 
-  // Copy Share Link
+  // Copy Share Link Button
   document.getElementById("btn-copy").addEventListener("click", () => {
     const linkText = document.getElementById("share-link-text").innerText;
     navigator.clipboard.writeText(linkText).then(() => {
@@ -303,7 +311,7 @@
     if (status === "WAITING") {
       badge.innerText = "LOBBY - WAITING FOR HOST";
       badge.className = "badge WAITING";
-      statusMsg.innerText = isHost ? "Click 'Start Study Session' when everyone is ready." : "Waiting for host to start session...";
+      statusMsg.innerText = isHost ? "Click 'Start Study Session' when ready." : "Waiting for host to start session...";
       chatInput.disabled = true;
       sendBtn.disabled = true;
       document.getElementById("timer-display").innerText = `${String(focusMins).padStart(2, '0')}:00`;
@@ -344,7 +352,7 @@
     });
   }
 
-  // Chat Send
+  // Chat Send Handler
   document.getElementById("send-btn").addEventListener("click", sendMessage);
   function sendMessage() {
     const input = document.getElementById("chat-input");
