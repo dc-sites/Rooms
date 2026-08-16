@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Learny - Study Room</title>
+  <style>
+    * { box-sizing: border-box; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+    body { background-color: #0f172a; color: #f8fafc; margin: 0; padding: 20px; display: flex; justify-content: center; }
+    .container { width: 100%; max-width: 900px; display: flex; flex-direction: column; gap: 20px; }
+    .card { background: #1e293b; border-radius: 12px; padding: 20px; border: 1px solid #334155; }
+    .flex { display: flex; gap: 15px; }
+    input, button { padding: 10px 14px; border-radius: 6px; border: 1px solid #475569; background: #0f172a; color: #fff; }
+    button { background: #2563eb; cursor: pointer; border: none; font-weight: bold; }
+    button:hover { background: #1d4ed8; }
+    
+    /* Timer Display */
+    .timer-box { text-align: center; padding: 40px 20px; }
+    .timer { font-size: 4rem; font-weight: 800; letter-spacing: 2px; color: #38bdf8; margin: 10px 0; }
+    .badge { display: inline-block; padding: 6px 12px; border-radius: 20px; font-weight: bold; background: #0284c7; }
+    .badge.BREAK { background: #16a34a; }
+
+    /* Layout grid */
+    .grid { display: grid; grid-template-columns: 2fr 1fr; gap: 20px; }
+    .user-tag { background: #334155; padding: 6px 10px; border-radius: 6px; margin-bottom: 6px; font-size: 0.9rem; }
+    .chat-box { height: 180px; overflow-y: auto; background: #0f172a; padding: 10px; border-radius: 6px; margin-bottom: 10px; }
+    .chat-msg { margin-bottom: 6px; font-size: 0.85rem; }
+    .hidden { display: none; }
+  </style>
+</head>
+<body>
+
+<div class="container">
+  <!-- Section A: Create or Join -->
+  <div id="setup-section" class="card">
+    <h2>🎯 Learny Virtual Study Room</h2>
+    <div class="flex" style="margin-bottom: 15px;">
+      <input type="text" id="user-name" placeholder="Your Name (e.g. Kasun)" style="flex: 1;" />
+    </div>
+    
+    <div class="grid">
+      <div>
+        <h3>Create New Room</h3>
+        <input type="text" id="new-room-name" placeholder="Room Name (e.g., Physics Past Papers)" style="width: 100%; margin-bottom: 10px;" />
+        <div class="flex" style="margin-bottom: 10px;">
+          <input type="number" id="focus-mins" value="25" placeholder="Focus Mins" style="width: 50%;" />
+          <input type="number" id="break-mins" value="5" placeholder="Break Mins" style="width: 50%;" />
+        </div>
+        <button onclick="createRoom()">Create & Join</button>
+      </div>
+
+      <div>
+        <h3>Join Existing Room</h3>
+        <input type="text" id="join-room-id" placeholder="Enter Room ID (e.g., phys-a3f2)" style="width: 100%; margin-bottom: 10px;" />
+        <button onclick="joinRoomDirect()">Join Room</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Section B: Active Study Room -->
+  <div id="room-section" class="card hidden">
+    <div class="flex" style="justify-content: space-between; align-items: center;">
+      <h2 id="display-room-title">Study Room</h2>
+      <span id="room-id-tag" style="color: #94a3b8; font-family: monospace;"></span>
+    </div>
+
+    <div class="timer-box">
+      <span id="phase-badge" class="badge">FOCUS MODE</span>
+      <div id="timer-display" class="timer">00:00</div>
+      <p id="chat-status-msg" style="color: #94a3b8; font-size: 0.9rem;">💬 Chat is locked during Focus mode.</p>
+    </div>
+
+    <div class="grid">
+      <!-- Chat Area -->
+      <div>
+        <h3>Room Chat</h3>
+        <div id="chat-box" class="chat-box"></div>
+        <div class="flex">
+          <input type="text" id="chat-input" placeholder="Type message during break..." style="flex: 1;" disabled />
+          <button id="send-btn" onclick="sendMessage()" disabled>Send</button>
+        </div>
+      </div>
+
+      <!-- User List -->
+      <div>
+        <h3>Active Students (<span id="user-count">0</span>)</h3>
+        <div id="user-list"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script>
+  const socket = io();
+  let currentRoomId = "";
+  let endTime = 0;
+  let timerInterval = null;
+
+  async function createRoom() {
+    const roomName = document.getElementById("new-room-name").value;
+    const focusMins = document.getElementById("focus-mins").value;
+    const breakMins = document.getElementById("break-mins").value;
+
+    const res = await fetch("/api/rooms/create", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ roomName, focusMins, breakMins })
+    });
+    
+    const data = await res.json();
+    if (data.success) {
+      enterRoom(data.roomId);
+    }
+  }
+
+  function joinRoomDirect() {
+    const roomId = document.getElementById("join-room-id").value.trim();
+    if (roomId) enterRoom(roomId);
+  }
+
+  function enterRoom(roomId) {
+    currentRoomId = roomId;
+    const userName = document.getElementById("user-name").value || "Student";
+    
+    document.getElementById("setup-section").classList.add("hidden");
+    document.getElementById("room-section").classList.remove("hidden");
+    document.getElementById("room-id-tag").innerText = `ID: ${roomId}`;
+
+    socket.emit("join_room", { roomId, userName });
+  }
+
+  socket.on("room_updated", (data) => {
+    document.getElementById("display-room-title").innerText = data.roomName;
+    document.getElementById("user-count").innerText = data.users.length;
+    
+    const userList = document.getElementById("user-list");
+    userList.innerHTML = data.users.map(u => `<div class="user-tag">🎓 ${u}</div>`).join("");
+
+    updatePhase(data.status, data.endTime);
+  });
+
+  socket.on("phase_changed", (data) => {
+    updatePhase(data.status, data.endTime);
+  });
+
+  function updatePhase(status, roomEndTime) {
+    endTime = roomEndTime;
+    const badge = document.getElementById("phase-badge");
+    const chatInput = document.getElementById("chat-input");
+    const sendBtn = document.getElementById("send-btn");
+    const chatStatus = document.getElementById("chat-status-msg");
+
+    badge.innerText = status === "FOCUS" ? "FOCUS MODE" : "BREAK TIME";
+    badge.className = `badge ${status}`;
+
+    if (status === "FOCUS") {
+      chatInput.disabled = true;
+      sendBtn.disabled = true;
+      chatStatus.innerText = "🔒 Chat is locked during Focus mode.";
+    } else {
+      chatInput.disabled = false;
+      sendBtn.disabled = false;
+      chatStatus.innerText = "🔓 Break time! Chat with your study group.";
+    }
+
+    startLocalTicker();
+  }
+
+  function startLocalTicker() {
+    if (timerInterval) clearInterval(timerInterval);
+
+    timerInterval = setInterval(() => {
+      const remainingSecs = Math.max(0, Math.floor((endTime - Date.now()) / 1000));
+      const mins = String(Math.floor(remainingSecs / 60)).padStart(2, '0');
+      const secs = String(remainingSecs % 60).padStart(2, '0');
+      document.getElementById("timer-display").innerText = `${mins}:${secs}`;
+    }, 500);
+  }
+
+  function sendMessage() {
+    const input = document.getElementById("chat-input");
+    if (input.value.trim()) {
+      socket.emit("send_message", { roomId: currentRoomId, text: input.value });
+      input.value = "";
+    }
+  }
+
+  socket.on("new_message", (msg) => {
+    const box = document.getElementById("chat-box");
+    box.innerHTML += `<div class="chat-msg"><strong>${msg.sender}:</strong> ${msg.text}</div>`;
+    box.scrollTop = box.scrollHeight;
+  });
+
+  socket.on("error_msg", (msg) => alert(msg));
+</script>
+</body>
+</html>
