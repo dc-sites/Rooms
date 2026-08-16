@@ -1,0 +1,541 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Firebase Real-Time Chat</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: system-ui, -apple-system, sans-serif; }
+    body { background: #0f172a; color: #f8fafc; display: flex; height: 100vh; overflow: hidden; }
+    
+    /* Layout */
+    #sidebar { width: 320px; background: #1e293b; border-right: 1px solid #334155; display: flex; flex-direction: column; }
+    #chatArea { flex: 1; display: flex; flex-direction: column; background: #0f172a; }
+
+    /* Header & User Bar */
+    .header { padding: 16px; background: #1e293b; border-bottom: 1px solid #334155; font-weight: 600; display: flex; justify-content: space-between; align-items: center; }
+    .user-info { padding: 12px 16px; background: #0f172a; border-bottom: 1px solid #334155; font-size: 13px; display: flex; justify-content: space-between; align-items: center; }
+
+    /* Contacts & Requests */
+    .section-title { padding: 12px 16px 4px; font-size: 11px; text-transform: uppercase; color: #94a3b8; letter-spacing: 0.05em; font-weight: bold; }
+    #contactList { flex: 1; overflow-y: auto; }
+    .contact-item { padding: 12px 16px; border-bottom: 1px solid #334155; cursor: pointer; display: flex; justify-content: space-between; align-items: center; transition: background 0.2s; }
+    .contact-item:hover { background: #334155; }
+    .contact-item.blocked { opacity: 0.6; }
+
+    /* Badges & Indicators */
+    .unread-badge { background: #ef4444; color: white; font-size: 11px; font-weight: bold; padding: 2px 7px; border-radius: 9999px; margin-left: 6px; }
+    .unread-badge.hidden { display: none; }
+    .online-badge { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 6px; }
+    .online-badge.online { background: #22c55e; box-shadow: 0 0 6px #22c55e; }
+    .online-badge.offline { background: #64748b; }
+
+    /* Chat Messages Box */
+    #messagesBox { flex: 1; padding: 16px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
+    .message { max-width: 70%; padding: 10px 14px; border-radius: 12px; font-size: 14px; line-height: 1.4; word-break: break-word; }
+    .message.sent { align-self: flex-end; background: #0284c7; color: white; border-bottom-right-radius: 2px; }
+    .message.received { align-self: flex-start; background: #334155; color: white; border-bottom-left-radius: 2px; }
+    .message-actions { font-size: 11px; margin-left: 8px; }
+    .message-actions a { text-decoration: none; margin-left: 4px; }
+
+    /* Controls & Inputs */
+    .chat-input-area { padding: 12px 16px; background: #1e293b; border-top: 1px solid #334155; display: flex; flex-direction: column; gap: 8px; }
+    .input-row { display: flex; align-items: center; gap: 8px; }
+    input[type="text"] { flex: 1; padding: 10px 12px; border-radius: 6px; border: 1px solid #475569; background: #0f172a; color: white; outline: none; }
+    input[type="text"]:focus { border-color: #38bdf8; }
+    button { padding: 10px 16px; border-radius: 6px; border: none; background: #0284c7; color: white; font-weight: 600; cursor: pointer; }
+    button:hover { background: #0369a1; }
+    button:disabled { background: #475569; cursor: not-allowed; }
+    .icon-btn { padding: 8px 12px; background: #334155; border-radius: 6px; cursor: pointer; user-select: none; }
+
+    /* Auth Overlay */
+    #authOverlay { position: fixed; inset: 0; background: #0f172a; display: flex; justify-content: center; align-items: center; z-index: 50; }
+    .auth-card { background: #1e293b; padding: 24px; border-radius: 12px; width: 320px; display: flex; flex-direction: column; gap: 12px; border: 1px solid #334155; }
+    
+    /* Previews */
+    .preview-bar { padding: 6px 12px; background: #334155; font-size: 12px; border-radius: 6px; display: flex; justify-content: space-between; align-items: center; }
+  </style>
+</head>
+<body>
+
+  <!-- AUTH SCREEN -->
+  <div id="authOverlay">
+    <div class="auth-card">
+      <h2>Chat Login</h2>
+      <input type="email" id="authEmail" placeholder="Email" />
+      <input type="password" id="authPassword" placeholder="Password" />
+      <button id="loginBtn">Log In</button>
+      <button id="signupBtn" style="background:#334155;">Sign Up</button>
+    </div>
+  </div>
+
+  <!-- MAIN CHAT APP -->
+  <div id="sidebar">
+    <div class="header">Chats</div>
+    <div class="user-info">
+      <span id="userEmailLabel">Loading...</span>
+      <button id="logoutBtn" style="padding:4px 8px; font-size:12px; background:#ef4444;">Logout</button>
+    </div>
+    
+    <div class="section-title">Add Contact</div>
+    <div style="padding: 0 16px 12px; display:flex; gap:6px;">
+      <input type="text" id="addContactInput" placeholder="User ID / Email" style="font-size:12px;" />
+      <button id="addContactBtn" style="padding:6px 10px; font-size:12px;">Add</button>
+    </div>
+
+    <div class="section-title">Contacts</div>
+    <div id="contactList"></div>
+  </div>
+
+  <div id="chatArea">
+    <!-- CHAT HEADER -->
+    <div class="header" id="chatHeader">
+      <div>Select a contact to start chatting</div>
+      <div id="chatHeaderActions" style="display:none;">
+        <button id="blockBtn" style="padding:4px 10px; font-size:12px; background:#ef4444;">Block User</button>
+      </div>
+    </div>
+
+    <!-- MESSAGES DISPLAY -->
+    <div id="messagesBox"></div>
+
+    <!-- INPUT CONTROL PANEL -->
+    <div class="chat-input-area" id="inputArea" style="display:none;">
+      <!-- Image & Voice Previews -->
+      <div id="imagePreviewBox" class="preview-bar" style="display:none;">
+        <span>Image: <strong id="previewFileName"></strong></span>
+        <span onclick="clearSelectedImage()" style="cursor:pointer; color:#ef4444;">✕ Remove</span>
+      </div>
+
+      <div class="input-row">
+        <!-- Image Upload Button -->
+        <label for="imageInput" class="icon-btn">📷</label>
+        <input type="file" id="imageInput" accept="image/*" style="display:none;" />
+
+        <!-- Microphone Button & Record Counter -->
+        <button id="recordBtn" type="button" class="icon-btn" style="border:none;">🎙️</button>
+        <span id="recordTimer" style="display:none; color:#ef4444; font-size:12px; font-weight:bold;">0:00 🔴</span>
+
+        <!-- Message Box -->
+        <input type="text" id="messageInput" placeholder="Type a message..." />
+        <button id="sendMsgBtn">Send</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- FIREBASE MODULE APPLICATION CODE -->
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+    import { 
+      getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged 
+    } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+    import { 
+      getFirestore, doc, setDoc, getDoc, updateDoc, addDoc, collection, query, where, orderBy, onSnapshot, serverTimestamp, deleteDoc, arrayUnion, arrayRemove 
+    } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+    import { 
+      getDatabase, ref as rtdbRef, set as rtdbSet, remove as rtdbRemove, onValue, onDisconnect, serverTimestamp as rtdbTimestamp 
+    } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+    import { 
+      getStorage, ref as storageRef, uploadBytes, getDownloadURL 
+    } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js";
+
+    // --- 1. FIREBASE INITIALIZATION ---
+    const firebaseConfig = {
+      apiKey: "YOUR_API_KEY",
+      authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
+      databaseURL: "https://YOUR_PROJECT_ID-default-rtdb.firebaseio.com",
+      projectId: "YOUR_PROJECT_ID",
+      storageBucket: "YOUR_PROJECT_ID.appspot.com",
+      messagingSenderId: "YOUR_SENDER_ID",
+      appId: "YOUR_APP_ID"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const auth = getAuth(app);
+    const db = getFirestore(app);
+    const rtdb = getDatabase(app);
+    const storage = getStorage(app);
+
+    // --- GLOBAL APP STATE ---
+    let currentUser = null;
+    let currentUserData = null;
+    let activeChatUserId = null;
+    let activeChatUnsubscribe = null;
+    let activeTypingUnsubscribe = null;
+    let unreadListenersMap = new Map();
+    let presenceListenersMap = new Map();
+
+    // Input States
+    let selectedImageFile = null;
+    let recordedAudioBlob = null;
+    let mediaRecorder = null;
+    let audioChunks = [];
+    let isRecording = false;
+    let recordTimerInterval = null;
+    let typingTimeout = null;
+    let editingMessageId = null;
+
+    // Audio Assets
+    const notificationSound = new Audio('https://actions.google.com/sounds/v1/sounds_or_effects/positive_notification.ogg');
+
+    // --- 2. AUTHENTICATION & INITIALIZATION ---
+    document.getElementById('loginBtn').onclick = () => {
+      const e = document.getElementById('authEmail').value, p = document.getElementById('authPassword').value;
+      signInWithEmailAndPassword(auth, e, p).catch(err => alert(err.message));
+    };
+    
+    document.getElementById('signupBtn').onclick = () => {
+      const e = document.getElementById('authEmail').value, p = document.getElementById('authPassword').value;
+      createUserWithEmailAndPassword(auth, e, p).then(cred => {
+        return setDoc(doc(db, 'users', cred.user.uid), { email: e, contacts: [], blockedUsers: [] });
+      }).catch(err => alert(err.message));
+    };
+
+    document.getElementById('logoutBtn').onclick = () => signOut(auth);
+
+    onAuthStateChanged(auth, async (user) => {
+      if (user) {
+        currentUser = user;
+        document.getElementById('authOverlay').style.display = 'none';
+        document.getElementById('userEmailLabel').innerText = user.email;
+        setupPresence(user.uid);
+
+        // Listen to Current User Document for Contacts and Blocked List Updates
+        onSnapshot(doc(db, 'users', user.uid), (docSnap) => {
+          currentUserData = docSnap.data() || { contacts: [], blockedUsers: [] };
+          renderContactsList(currentUserData.contacts || []);
+        });
+
+      } else {
+        currentUser = null;
+        document.getElementById('authOverlay').style.display = 'flex';
+      }
+    });
+
+    // --- 3. PRESENCE TRACKING (RTDB) ---
+    function setupPresence(userId) {
+      const userPresenceRef = rtdbRef(rtdb, `/status/${userId}`);
+      const connectedRef = rtdbRef(rtdb, '.info/connected');
+
+      onValue(connectedRef, (snap) => {
+        if (snap.val() === false) return;
+        onDisconnect(userPresenceRef).set({ state: 'offline', lastChanged: rtdbTimestamp() }).then(() => {
+          rtdbSet(userPresenceRef, { state: 'online', lastChanged: rtdbTimestamp() });
+        });
+      });
+    }
+
+    function listenToPresence(targetUserId, elementId) {
+      if (presenceListenersMap.has(targetUserId)) return;
+      const statusRef = rtdbRef(rtdb, `/status/${targetUserId}`);
+      const unsub = onValue(statusRef, (snap) => {
+        const el = document.getElementById(elementId);
+        if (!el) return;
+        const data = snap.val();
+        if (data && data.state === 'online') {
+          el.innerHTML = `<span class="online-badge online"></span> Online`;
+        } else {
+          el.innerHTML = `<span class="online-badge offline"></span> Offline`;
+        }
+      });
+      presenceListenersMap.set(targetUserId, unsub);
+    }
+
+    // --- 4. CONTACTS & BLOCKING MANAGEMENT ---
+    document.getElementById('addContactBtn').onclick = async () => {
+      const targetId = document.getElementById('addContactInput').value.trim();
+      if (!targetId || targetId === currentUser.uid) return;
+
+      await updateDoc(doc(db, 'users', currentUser.uid), {
+        contacts: arrayUnion(targetId)
+      });
+      document.getElementById('addContactInput').value = '';
+    };
+
+    function renderContactsList(contacts) {
+      const container = document.getElementById('contactList');
+      container.innerHTML = '';
+
+      contacts.forEach(contactId => {
+        const isBlocked = currentUserData.blockedUsers?.includes(contactId);
+        const item = document.createElement('div');
+        item.className = `contact-item ${isBlocked ? 'blocked' : ''}`;
+        
+        const badgeId = `unread-badge-${contactId}`;
+        const presenceId = `presence-${contactId}`;
+
+        item.innerHTML = `
+          <div>
+            <div style="font-weight:600; font-size:14px;">
+              ${contactId.slice(0, 10)}...
+              <span id="${badgeId}" class="unread-badge hidden">0</span>
+            </div>
+            <div id="${presenceId}" style="font-size:11px; color:#94a3b8;">
+              <span class="online-badge offline"></span> Offline
+            </div>
+          </div>
+          ${isBlocked ? '<span style="font-size:10px; color:#ef4444; font-weight:bold;">BLOCKED</span>' : ''}
+        `;
+
+        item.onclick = () => openChat(contactId);
+        container.appendChild(item);
+
+        listenToPresence(contactId, presenceId);
+        listenToUnreadCount(contactId, badgeId);
+      });
+    }
+
+    document.getElementById('blockBtn').onclick = async () => {
+      if (!activeChatUserId) return;
+      const isBlocked = currentUserData.blockedUsers?.includes(activeChatUserId);
+
+      if (isBlocked) {
+        // Unblock
+        await updateDoc(doc(db, 'users', currentUser.uid), {
+          blockedUsers: arrayRemove(activeChatUserId)
+        });
+        document.getElementById('blockBtn').innerText = "Block User";
+        document.getElementById('blockBtn').style.background = "#ef4444";
+      } else {
+        // Block
+        await updateDoc(doc(db, 'users', currentUser.uid), {
+          blockedUsers: arrayUnion(activeChatUserId)
+        });
+        document.getElementById('blockBtn').innerText = "Unblock User";
+        document.getElementById('blockBtn').style.background = "#059669";
+      }
+    };
+
+    // --- 5. UNREAD MESSAGES BADGE ---
+    function listenToUnreadCount(otherUserId, badgeId) {
+      if (unreadListenersMap.has(otherUserId)) unreadListenersMap.get(otherUserId)();
+
+      const chatDocId = [currentUser.uid, otherUserId].sort().join('_');
+      const q = query(collection(db, 'chats', chatDocId, 'messages'), where('senderId', '==', otherUserId), where('seen', '==', false));
+
+      const unsub = onSnapshot(q, (snap) => {
+        const badgeEl = document.getElementById(badgeId);
+        if (!badgeEl) return;
+
+        if (activeChatUserId === otherUserId || snap.empty) {
+          badgeEl.classList.add('hidden');
+        } else {
+          badgeEl.innerText = snap.size;
+          badgeEl.classList.remove('hidden');
+        }
+      });
+      unreadListenersMap.set(otherUserId, unsub);
+    }
+
+    // --- 6. OPEN CHAT ROOM & MESSAGES LISTENER ---
+    function openChat(otherUserId) {
+      activeChatUserId = otherUserId;
+      document.getElementById('inputArea').style.display = 'flex';
+      document.getElementById('chatHeaderActions').style.display = 'block';
+
+      // Update Header Title & Block Button
+      const isBlocked = currentUserData.blockedUsers?.includes(otherUserId);
+      const blockBtn = document.getElementById('blockBtn');
+      blockBtn.innerText = isBlocked ? "Unblock User" : "Block User";
+      blockBtn.style.background = isBlocked ? "#059669" : "#ef4444";
+
+      const header = document.getElementById('chatHeader');
+      header.children[0].innerHTML = `
+        <div>Chat with ${otherUserId.slice(0, 10)}...</div>
+        <div id="typingIndicator" style="font-size:11px; color:#38bdf8; height:14px;"></div>
+      `;
+
+      const chatDocId = [currentUser.uid, otherUserId].sort().join('_');
+
+      // Listen to Typing Indicator
+      if (activeTypingUnsubscribe) activeTypingUnsubscribe();
+      activeTypingUnsubscribe = onValue(rtdbRef(rtdb, `/typing/${chatDocId}/${otherUserId}`), (snap) => {
+        const indicator = document.getElementById('typingIndicator');
+        if (indicator) indicator.innerText = snap.val() ? "typing..." : "";
+      });
+
+      // Clear previous message listener
+      if (activeChatUnsubscribe) activeChatUnsubscribe();
+
+      let isInitialLoad = true;
+      const q = query(collection(db, 'chats', chatDocId, 'messages'), orderBy('createdAt', 'asc'));
+
+      activeChatUnsubscribe = onSnapshot(q, (snap) => {
+        const messagesBox = document.getElementById('messagesBox');
+        messagesBox.innerHTML = '';
+
+        snap.docs.forEach((docSnap) => {
+          const data = docSnap.data();
+          const messageId = docSnap.id;
+          const isSender = data.senderId === currentUser.uid;
+
+          // Mark incoming unread messages as seen
+          if (!isSender && data.seen === false) {
+            updateDoc(doc(db, 'chats', chatDocId, 'messages', messageId), { seen: true });
+          }
+
+          // Build UI Message Element
+          const msgDiv = document.createElement('div');
+          msgDiv.className = `message ${isSender ? 'sent' : 'received'}`;
+          
+          let html = '';
+          if (data.imageUrl) html += `<div><img src="${data.imageUrl}" style="max-width:200px; border-radius:8px; margin-bottom:4px;" /></div>`;
+          if (data.audioUrl) html += `<div><audio controls src="${data.audioUrl}" style="max-width:220px; height:32px;"></audio></div>`;
+          if (data.text) html += `<span>${data.text}</span>`;
+          if (data.isEdited) html += `<span style="font-size:10px; opacity:0.7;"> (edited)</span>`;
+
+          if (isSender) {
+            const checks = data.seen ? '<span style="color:#38bdf8;">✓✓</span>' : '<span style="color:#94a3b8;">✓</span>';
+            const editBtn = data.text ? `<a href="#" onclick="window.startEdit('${messageId}', '${data.text}')" style="color:#38bdf8;">edit</a>` : '';
+            const deleteBtn = `<a href="#" onclick="window.deleteMsg('${messageId}')" style="color:#ef4444;">del</a>`;
+            html += ` <span class="message-actions">${checks} ${editBtn} ${deleteBtn}</span>`;
+          }
+
+          msgDiv.innerHTML = html;
+          messagesBox.appendChild(msgDiv);
+        });
+
+        messagesBox.scrollTop = messagesBox.scrollHeight;
+
+        // Play audio alert for new incoming message
+        if (!isInitialLoad && snap.docChanges().some(c => c.type === 'added' && c.doc.data().senderId === otherUserId)) {
+          notificationSound.play().catch(() => {});
+        }
+        isInitialLoad = false;
+      });
+    }
+
+    // --- 7. MESSAGE SENDING & EDITING ---
+    document.getElementById('sendMsgBtn').onclick = sendMessage;
+
+    async function sendMessage() {
+      const input = document.getElementById('messageInput');
+      const text = input.value.trim();
+      if ((!text && !selectedImageFile && !recordedAudioBlob) || !activeChatUserId) return;
+
+      // CHECK IF YOU ARE BLOCKED BY OTHER USER OR HAVE BLOCKED THEM
+      const otherUserDoc = await getDoc(doc(db, 'users', activeChatUserId));
+      const targetBlockedList = otherUserDoc.data()?.blockedUsers || [];
+      
+      if (targetBlockedList.includes(currentUser.uid)) {
+        alert("You cannot send messages to this user (you are blocked).");
+        return;
+      }
+      if (currentUserData.blockedUsers?.includes(activeChatUserId)) {
+        alert("You must unblock this user before sending messages.");
+        return;
+      }
+
+      const chatDocId = [currentUser.uid, activeChatUserId].sort().join('_');
+
+      // Edit Existing Message
+      if (editingMessageId) {
+        await updateDoc(doc(db, 'chats', chatDocId, 'messages', editingMessageId), {
+          text: text,
+          isEdited: true
+        });
+        cancelEdit();
+        return;
+      }
+
+      // Upload Attachments
+      let imageUrl = null, audioUrl = null;
+      if (selectedImageFile) {
+        const fileRef = storageRef(storage, `chats/${chatDocId}/${Date.now()}_img`);
+        await uploadBytes(fileRef, selectedImageFile);
+        imageUrl = await getDownloadURL(fileRef);
+      }
+      if (recordedAudioBlob) {
+        const audioRef = storageRef(storage, `chats/${chatDocId}/${Date.now()}_voice.webm`);
+        await uploadBytes(audioRef, recordedAudioBlob);
+        audioUrl = await getDownloadURL(audioRef);
+      }
+
+      // Save Message to Firestore
+      await addDoc(collection(db, 'chats', chatDocId, 'messages'), {
+        senderId: currentUser.uid,
+        text: text,
+        imageUrl: imageUrl,
+        audioUrl: audioUrl,
+        seen: false,
+        createdAt: serverTimestamp()
+      });
+
+      // Clear input states
+      input.value = '';
+      clearSelectedImage();
+      recordedAudioBlob = null;
+      rtdbRemove(rtdbRef(rtdb, `/typing/${chatDocId}/${currentUser.uid}`));
+    }
+
+    // Edit/Delete Expose to Window
+    window.startEdit = (id, text) => {
+      editingMessageId = id;
+      document.getElementById('messageInput').value = text;
+      document.getElementById('sendMsgBtn').innerText = "Save";
+    };
+
+    window.deleteMsg = async (id) => {
+      if (!confirm("Delete message?")) return;
+      const chatDocId = [currentUser.uid, activeChatUserId].sort().join('_');
+      await deleteDoc(doc(db, 'chats', chatDocId, 'messages', id));
+    };
+
+    function cancelEdit() {
+      editingMessageId = null;
+      document.getElementById('messageInput').value = '';
+      document.getElementById('sendMsgBtn').innerText = "Send";
+    }
+
+    // --- 8. TYPING INDICATOR EMITTER ---
+    document.getElementById('messageInput').addEventListener('input', () => {
+      if (!activeChatUserId || !currentUser) return;
+      const chatDocId = [currentUser.uid, activeChatUserId].sort().join('_');
+      const typingRef = rtdbRef(rtdb, `/typing/${chatDocId}/${currentUser.uid}`);
+
+      rtdbSet(typingRef, true);
+      onDisconnect(typingRef).remove();
+
+      if (typingTimeout) clearTimeout(typingTimeout);
+      typingTimeout = setTimeout(() => rtdbRemove(typingRef), 1500);
+    });
+
+    // --- 9. AUDIO RECORDING & IMAGE PREVIEW HANDLERS ---
+    document.getElementById('imageInput').addEventListener('change', (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      selectedImageFile = file;
+      document.getElementById('previewFileName').innerText = file.name;
+      document.getElementById('imagePreviewBox').style.display = 'flex';
+    });
+
+    window.clearSelectedImage = () => {
+      selectedImageFile = null;
+      document.getElementById('imageInput').value = '';
+      document.getElementById('imagePreviewBox').style.display = 'none';
+    };
+
+    document.getElementById('recordBtn').onclick = async () => {
+      if (!isRecording) {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        mediaRecorder = new MediaRecorder(stream);
+        audioChunks = [];
+        mediaRecorder.ondataavailable = (e) => audioChunks.push(e.data);
+        mediaRecorder.onstop = () => {
+          recordedAudioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+          stream.getTracks().forEach(t => t.stop());
+        };
+        mediaRecorder.start();
+        isRecording = true;
+        document.getElementById('recordBtn').style.background = '#ef4444';
+        document.getElementById('recordTimer').style.display = 'inline';
+      } else {
+        mediaRecorder.stop();
+        isRecording = false;
+        document.getElementById('recordBtn').style.background = '#334155';
+        document.getElementById('recordTimer').style.display = 'none';
+      }
+    };
+  </script>
+</body>
+</html>
